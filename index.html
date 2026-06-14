@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Удобная веб-страница для поиска и обработки информации о заказах логиста из Google Таблицы">
+    <title>Логистический помощник | LogistHelper</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Подключаем PapaParse локально -->
+    <script src="libs/papaparse.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <header class="glass-panel">
+            <div class="logo-section">
+                <div class="logo-icon">L</div>
+                <div class="logo-text">
+                    <h1>LogistHelper</h1>
+                    <span>Панель управления логистикой</span>
+                </div>
+            </div>
+            <div class="header-controls">
+                <div class="sync-status" id="syncStatus">
+                    <span class="sync-dot" id="syncDot"></span>
+                    <span id="syncText">Проверка кэша...</span>
+                </div>
+                <!-- Кнопка принудительного обновления -->
+                <button class="btn-icon" id="btnSync" title="Синхронизировать данные с таблицей">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                </button>
+                <!-- Кнопка настроек -->
+                <button class="btn-icon" id="btnSettings" title="Настройки таблицы">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </button>
+                <!-- Переключатель темы -->
+                <button class="btn-icon" id="btnTheme" title="Переключить тему оформления">
+                    <svg id="themeIcon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- DASHBOARD MAIN -->
+        <div class="dashboard-main">
+            <!-- SIDEBAR SEARCH & FILTERS -->
+            <aside class="glass-panel search-sidebar">
+                <div class="search-container">
+                    <label class="filter-label" for="searchInput">Поиск заказа</label>
+                    <div class="search-input-wrapper" style="margin-top: 6px;">
+                        <span class="search-icon-inside">🔍</span>
+                        <input type="text" id="searchInput" class="search-input" placeholder="Номер заказа, клиент или ТТН..." autocomplete="off">
+                        <div class="search-loader" id="searchLoader"></div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- RESULTS WORKSPACE -->
+            <main class="results-area" id="resultsArea">
+                <!-- Начальное состояние (Empty State) -->
+                <div class="glass-panel empty-state" id="emptyState">
+                    <div class="empty-icon">🚛</div>
+                    <h3>Начните поиск</h3>
+                    <p>Введите номер заказа (например: 2020619 или 2020686,1), имя заказчика или номер декларации в поле слева.</p>
+                </div>
+
+                <!-- Список найденных заказов (если их несколько) -->
+                <div class="orders-list" id="ordersList" style="display: none;">
+                    <!-- Динамические мини-карточки -->
+                </div>
+
+                <!-- Детальный вид заказа -->
+                <div class="glass-panel detail-view" id="detailView" style="display: none;">
+                    <!-- Рендерится динамически из JavaScript -->
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATION -->
+    <div class="toast" id="toast">
+        <span id="toastIcon">ℹ️</span>
+        <span id="toastText">Уведомление</span>
+    </div>
+
+    <!-- SETTINGS MODAL -->
+    <div class="modal" id="settingsModal">
+        <div class="glass-panel modal-content" style="max-width: 550px;">
+            <div class="modal-header">
+                <h3>Настройки системы LogistHelper</h3>
+                <button class="btn-icon" id="btnCloseSettings" style="border: none; font-size: 1.2rem;">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 65vh; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 14px;">
+                <div class="filter-group">
+                    <label class="filter-label" for="sheetIdInput">ID Google Таблицы</label>
+                    <input type="text" id="sheetIdInput" class="input-text" placeholder="Введите ID таблицы..." style="margin-top: 6px;">
+                    <span style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; display: block;">
+                        Таблица должна быть открыта для чтения по ссылке.
+                    </span>
+                </div>
+                
+                <div class="filter-group">
+                    <label class="filter-label" for="npApiKeyInput">API Ключ Новой Почты</label>
+                    <input type="text" id="npApiKeyInput" class="input-text" placeholder="Введите API ключ..." style="margin-top: 6px; font-family: monospace;">
+                    <span style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; display: block;">
+                        Ключ API 2.0 из личного кабинета Новой Почты.
+                    </span>
+                </div>
+
+                <div class="filter-group">
+                    <label class="filter-label" for="senderNameInput">ФИО Отправителя (на укр.)</label>
+                    <input type="text" id="senderNameInput" class="input-text" placeholder="Например: Петренко Петро..." style="margin-top: 6px;">
+                    <span style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; display: block;">
+                        ФИО отправителя, как зарегистрировано в кабинете Новой Почты.
+                    </span>
+                </div>
+
+                <div class="filter-group">
+                    <label class="filter-label" for="senderPhoneInput">Телефон Отправителя</label>
+                    <input type="text" id="senderPhoneInput" class="input-text" placeholder="Например: 380671234567..." style="margin-top: 6px;">
+                    <span style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; display: block;">
+                        Телефон, привязанный к аккаунту Новой Почты (в формате 380XXXXXXXXX).
+                    </span>
+                </div>
+
+                <div class="filter-group">
+                    <label class="filter-label" for="corsProxyInput">CORS Proxy URL (опционально)</label>
+                    <input type="text" id="corsProxyInput" class="input-text" placeholder="Например: https://api.allorigins.win/get?url=..." style="margin-top: 6px;">
+                    <span style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; display: block;">
+                        Используется для обхода ограничений CORS. Оставьте пустым, если запускаете Chrome с флагом --disable-web-security.
+                    </span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btnCancelSettings">Отмена</button>
+                <button class="btn btn-primary" id="btnSaveSettings">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TTN MODAL -->
+    <div class="modal" id="ttnModal">
+        <div class="glass-panel modal-content" style="max-width: 650px; width: 95%;">
+            <div class="modal-header">
+                <h3>Оформление ТТН Новой Почты</h3>
+                <button class="btn-icon" id="btnCloseTtnModal" style="border: none; font-size: 1.2rem;">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 16px;">
+                <!-- Секция: Получатель -->
+                <div class="form-section">
+                    <h4 style="color: var(--accent); border-bottom: 1px solid var(--border-color); padding-bottom: 6px; margin-bottom: 12px; text-align: left;">👤 Получатель</h4>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="filter-group">
+                            <label class="filter-label" for="recLastName" style="text-align: left; display: block;">Фамилия</label>
+                            <input type="text" id="recLastName" class="input-text" placeholder="Иванов" required>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label" for="recFirstName" style="text-align: left; display: block;">Имя</label>
+                            <input type="text" id="recFirstName" class="input-text" placeholder="Иван" required>
+                        </div>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px;">
+                        <div class="filter-group">
+                            <label class="filter-label" for="recPhone" style="text-align: left; display: block;">Телефон</label>
+                            <input type="text" id="recPhone" class="input-text" placeholder="0971234567" required>
+                        </div>
+                        <div class="filter-group" style="position: relative;">
+                            <label class="filter-label" for="recCityInput" style="text-align: left; display: block;">Населенный пункт</label>
+                            <input type="text" id="recCityInput" class="input-text" placeholder="Начните вводить город..." autocomplete="off">
+                            <div class="autocomplete-dropdown" id="recCityDropdown"></div>
+                            <input type="hidden" id="recCityRef">
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 12px; text-align: left;">
+                        <label class="filter-label">Способ доставки</label>
+                        <div style="display: flex; gap: 12px; margin-top: 6px;">
+                            <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.9rem;">
+                                <input type="radio" name="deliveryType" value="warehouse" checked id="delTypeWarehouse"> В отделение
+                            </label>
+                            <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.9rem;">
+                                <input type="radio" name="deliveryType" value="doors" id="delTypeDoors"> На адрес (курьер)
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Поля для Отделения -->
+                    <div class="filter-group" id="warehouseSelectionGroup" style="position: relative; margin-top: 12px;">
+                        <label class="filter-label" for="recWarehouseInput" style="text-align: left; display: block;">Отделение Новой Почты</label>
+                        <input type="text" id="recWarehouseInput" class="input-text" placeholder="Начните вводить номер или адрес отделения..." autocomplete="off">
+                        <div class="autocomplete-dropdown" id="recWarehouseDropdown"></div>
+                        <input type="hidden" id="recWarehouseRef">
+                    </div>
+
+                    <!-- Поля для Адреса -->
+                    <div id="addressSelectionGroup" style="display: none; margin-top: 12px; flex-direction: column; gap: 10px;">
+                        <div class="filter-group" style="position: relative;">
+                            <label class="filter-label" for="recStreetInput" style="text-align: left; display: block;">Улица</label>
+                            <input type="text" id="recStreetInput" class="input-text" placeholder="Начните вводить название улицы..." autocomplete="off">
+                            <div class="autocomplete-dropdown" id="recStreetDropdown"></div>
+                            <input type="hidden" id="recStreetRef">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                            <div class="filter-group">
+                                <label class="filter-label" for="recBuilding" style="text-align: left; display: block;">Дом</label>
+                                <input type="text" id="recBuilding" class="input-text" placeholder="18">
+                            </div>
+                            <div class="filter-group">
+                                <label class="filter-label" for="recFlat" style="text-align: left; display: block;">Кв. / Офис</label>
+                                <input type="text" id="recFlat" class="input-text" placeholder="10">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Секция: Параметры посылки -->
+                <div class="form-section">
+                    <h4 style="color: var(--accent); border-bottom: 1px solid var(--border-color); padding-bottom: 6px; margin-bottom: 12px; text-align: left;">📦 Детали отправления</h4>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="filter-group">
+                            <label class="filter-label" for="cargoTypeSelect" style="text-align: left; display: block;">Тип груза</label>
+                            <select id="cargoTypeSelect" class="input-text" style="margin-top: 6px; height: 40px; background: #2a2d35; color: white; border: 1px solid var(--border-color);">
+                                <option value="Parcel" selected>Посылка (до 30 кг)</option>
+                                <option value="Cargo">Груз (более 30 кг)</option>
+                                <option value="Documents">Документы</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label" for="seatsAmountInput" style="text-align: left; display: block;">Количество мест</label>
+                            <input type="number" id="seatsAmountInput" class="input-text" min="1" max="100" value="1" style="margin-top: 6px;">
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px;">
+                        <div class="filter-group">
+                            <label class="filter-label" for="declaredCostInput" style="text-align: left; display: block;">Объявленная стоимость (грн)</label>
+                            <input type="number" id="declaredCostInput" class="input-text" min="100" value="200" style="margin-top: 6px;">
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label" for="cargoDescriptionInput" style="text-align: left; display: block;">Описание груза</label>
+                            <input type="text" id="cargoDescriptionInput" class="input-text" value="Товари для дому" placeholder="Описание..." style="margin-top: 6px;">
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px;">
+                        <div class="filter-group">
+                            <label class="filter-label" for="payerTypeSelect" style="text-align: left; display: block;">Кто оплачивает</label>
+                            <select id="payerTypeSelect" class="input-text" style="margin-top: 6px; height: 40px; background: #2a2d35; color: white; border: 1px solid var(--border-color);">
+                                <option value="Recipient" selected>Получатель</option>
+                                <option value="Sender">Отправитель</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label" for="paymentMethodSelect" style="text-align: left; display: block;">Форма оплаты</label>
+                            <select id="paymentMethodSelect" class="input-text" style="margin-top: 6px; height: 40px; background: #2a2d35; color: white; border: 1px solid var(--border-color);">
+                                <option value="Cash" selected>Наличные (при получении)</option>
+                                <option value="NonCash">Безналичный</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 16px;">
+                        <label class="filter-label" style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>Размеры мест посылки (см, кг)</span>
+                            <span id="volumetricWeightLabel" style="font-size: 0.8rem; color: var(--accent); font-weight: normal;">Общий объемный вес: 0 кг</span>
+                        </label>
+                        <div class="seats-table-container" style="margin-top: 8px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: hidden;">
+                            <table id="seatsTable" style="width: 100%; border-collapse: collapse; text-align: center; font-size: 0.85rem;">
+                                <thead style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border-color);">
+                                    <tr>
+                                        <th style="padding: 8px;">Место</th>
+                                        <th style="padding: 8px;">Вес (кг)</th>
+                                        <th style="padding: 8px;">Длина (см)</th>
+                                        <th style="padding: 8px;">Ширина (см)</th>
+                                        <th style="padding: 8px;">Высота (см)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="seatsTableBody">
+                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                        <td style="padding: 8px; font-weight: bold;">1</td>
+                                        <td style="padding: 6px;"><input type="number" class="seat-input seat-weight" min="0.1" step="0.1" value="1.0" style="width: 60px; text-align: center; background: #2a2d35; color: white; border: 1px solid var(--border-color); border-radius: 4px; padding: 4px;"></td>
+                                        <td style="padding: 6px;"><input type="number" class="seat-input seat-length" min="1" value="10" style="width: 60px; text-align: center; background: #2a2d35; color: white; border: 1px solid var(--border-color); border-radius: 4px; padding: 4px;"></td>
+                                        <td style="padding: 6px;"><input type="number" class="seat-input seat-width" min="1" value="10" style="width: 60px; text-align: center; background: #2a2d35; color: white; border: 1px solid var(--border-color); border-radius: 4px; padding: 4px;"></td>
+                                        <td style="padding: 6px;"><input type="number" class="seat-input seat-height" min="1" value="10" style="width: 60px; text-align: center; background: #2a2d35; color: white; border: 1px solid var(--border-color); border-radius: 4px; padding: 4px;"></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btnCancelTtn">Отмена</button>
+                <button class="btn btn-primary" id="btnCreateTtn" style="background: #e52d27; color: white; border-color: #e52d27;">🚀 Создать ТТН</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TTN SUCCESS MODAL -->
+    <div class="modal" id="ttnSuccessModal">
+        <div class="glass-panel modal-content" style="max-width: 500px; text-align: center; display: flex; flex-direction: column; gap: 20px;">
+            <div style="font-size: 4rem; margin-top: 10px;">🎉</div>
+            <h3 style="color: var(--success); font-size: 1.4rem;">ТТН Успешно Создана!</h3>
+            
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 16px;">
+                <div style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Номер экспресс-накладной</div>
+                <div id="successTtnNumber" style="font-size: 1.8rem; font-family: monospace; font-weight: 700; color: var(--accent); margin-top: 6px; user-select: all; cursor: pointer;" title="Кликните для копирования">20400012345678</div>
+                <div id="successTtnRef" style="display: none;"></div>
+                
+                <div style="display: flex; justify-content: center; gap: 8px; margin-top: 10px;">
+                    <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.8rem;" id="btnCopySuccessTtn">📋 Копировать номер</button>
+                    <a id="successTrackingLink" href="#" target="_blank" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; text-decoration: none;">🌐 Отследить</a>
+                </div>
+            </div>
+
+            <div style="text-align: left; font-size: 0.9rem; display: flex; flex-direction: column; gap: 8px;">
+                <div><strong>Получатель:</strong> <span id="successRecipientName"></span></div>
+                <div><strong>Куда:</strong> <span id="successDestination"></span></div>
+                <div><strong>Плательщик:</strong> <span id="successPayer"></span></div>
+                <div><strong>Расчетная стоимость доставки:</strong> <span id="successCost"></span> грн</div>
+                <div><strong>Ориентировочная дата доставки:</strong> <span id="successDeliveryDate"></span></div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+                <div style="font-size: 0.8rem; color: var(--text-secondary); text-align: left;">Печать документов Новой Почты:</div>
+                <div style="display: grid; grid-template-columns: 1fr; gap: 8px;">
+                    <button class="btn btn-primary" id="btnPrintTtnA4" style="background: var(--accent); color: white; justify-content: center; border-color: var(--accent);">📄 Печать ТТН (A4 PDF)</button>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <button class="btn btn-secondary" id="btnPrintMarking100" style="justify-content: center;">🏷️ Маркировка 100х100</button>
+                        <button class="btn btn-secondary" id="btnPrintMarking85" style="justify-content: center;">🏷️ Маркировка 85х85</button>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: center; margin-top: 10px; margin-bottom: 10px;">
+                <button class="btn btn-secondary" id="btnCloseSuccessModal" style="width: 120px; justify-content: center;">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Подключаем логику приложения -->
+    <script src="app.js"></script>
+</body>
+</html>
