@@ -146,71 +146,15 @@
             </div>
             <div class="modal-body" style="max-height: 70vh; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 16px;">
                 <!-- Секция: Получатель -->
-                <div class="form-section">
-                    <h4 style="color: var(--accent); border-bottom: 1px solid var(--border-color); padding-bottom: 6px; margin-bottom: 12px; text-align: left;">👤 Получатель</h4>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                        <div class="filter-group">
-                            <label class="filter-label" for="recLastName" style="text-align: left; display: block;">Фамилия</label>
-                            <input type="text" id="recLastName" class="input-text" placeholder="Иванов" required>
-                        </div>
-                        <div class="filter-group">
-                            <label class="filter-label" for="recFirstName" style="text-align: left; display: block;">Имя</label>
-                            <input type="text" id="recFirstName" class="input-text" placeholder="Иван" required>
-                        </div>
-                    </div>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px;">
-                        <div class="filter-group">
-                            <label class="filter-label" for="recPhone" style="text-align: left; display: block;">Телефон</label>
-                            <input type="text" id="recPhone" class="input-text" placeholder="0971234567" required>
-                        </div>
-                        <div class="filter-group" style="position: relative;">
-                            <label class="filter-label" for="recCityInput" style="text-align: left; display: block;">Населенный пункт</label>
-                            <input type="text" id="recCityInput" class="input-text" placeholder="Начните вводить город..." autocomplete="off">
-                            <div class="autocomplete-dropdown" id="recCityDropdown"></div>
-                            <input type="hidden" id="recCityRef">
-                        </div>
-                    </div>
-
-                    <div style="margin-top: 12px; text-align: left;">
-                        <label class="filter-label">Способ доставки</label>
-                        <div style="display: flex; gap: 12px; margin-top: 6px;">
-                            <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.9rem;">
-                                <input type="radio" name="deliveryType" value="warehouse" checked id="delTypeWarehouse"> В отделение
-                            </label>
-                            <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.9rem;">
-                                <input type="radio" name="deliveryType" value="doors" id="delTypeDoors"> На адрес (курьер)
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- Поля для Отделения -->
-                    <div class="filter-group" id="warehouseSelectionGroup" style="position: relative; margin-top: 12px;">
-                        <label class="filter-label" for="recWarehouseInput" style="text-align: left; display: block;">Отделение Новой Почты</label>
-                        <input type="text" id="recWarehouseInput" class="input-text" placeholder="Начните вводить номер или адрес отделения..." autocomplete="off">
-                        <div class="autocomplete-dropdown" id="recWarehouseDropdown"></div>
-                        <input type="hidden" id="recWarehouseRef">
-                    </div>
-
-                    <!-- Поля для Адреса -->
-                    <div id="addressSelectionGroup" style="display: none; margin-top: 12px; flex-direction: column; gap: 10px;">
-                        <div class="filter-group" style="position: relative;">
-                            <label class="filter-label" for="recStreetInput" style="text-align: left; display: block;">Улица</label>
-                            <input type="text" id="recStreetInput" class="input-text" placeholder="Начните вводить название улицы..." autocomplete="off">
-                            <div class="autocomplete-dropdown" id="recStreetDropdown"></div>
-                            <input type="hidden" id="recStreetRef">
-                        </div>
+                <div class="form-section" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color);">
+                    <h4 style="color: var(--accent); border-bottom: 1px solid var(--border-color); padding-bottom: 6px; margin-bottom: 12px; text-align: left;">👤 Получатель (автоматически из таблицы)</h4>
+                    <div style="display: flex; flex-direction: column; gap: 10px; text-align: left; font-size: 0.95rem;">
+                        <div><span style="color: var(--text-secondary); font-size: 0.8rem; text-transform: uppercase; display: block; margin-bottom: 2px;">ФИО получателя</span><strong id="previewRecName" style="font-size: 1.1rem; color: var(--text-primary);">Загрузка...</strong></div>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                            <div class="filter-group">
-                                <label class="filter-label" for="recBuilding" style="text-align: left; display: block;">Дом</label>
-                                <input type="text" id="recBuilding" class="input-text" placeholder="18">
-                            </div>
-                            <div class="filter-group">
-                                <label class="filter-label" for="recFlat" style="text-align: left; display: block;">Кв. / Офис</label>
-                                <input type="text" id="recFlat" class="input-text" placeholder="10">
-                            </div>
+                            <div><span style="color: var(--text-secondary); font-size: 0.8rem; text-transform: uppercase; display: block; margin-bottom: 2px;">Телефон</span><strong id="previewRecPhone" style="font-family: monospace; font-size: 1.1rem; color: var(--text-primary);">Загрузка...</strong></div>
+                            <div><span style="color: var(--text-secondary); font-size: 0.8rem; text-transform: uppercase; display: block; margin-bottom: 2px;">Статус адреса</span><span id="previewResolvingStatus" style="font-weight: 600; color: var(--warning);">🔍 Проверка...</span></div>
                         </div>
+                        <div><span style="color: var(--text-secondary); font-size: 0.8rem; text-transform: uppercase; display: block; margin-bottom: 2px;">Адрес доставки (Новая Почта)</span><strong id="previewRecAddress" style="color: var(--text-primary); font-size: 1rem; line-height: 1.4;">Загрузка...</strong></div>
                     </div>
                 </div>
 

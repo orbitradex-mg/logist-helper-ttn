@@ -655,6 +655,7 @@ function initTheme() {
 // ==========================================
 
 let currentOrderForTtn = null;
+let resolvedTtnData = null;
 
 // Вспомогательная функция для дебаунса ввода
 function debounce(func, wait) {
@@ -833,29 +834,6 @@ function updateVolumetricWeight() {
     document.getElementById('volumetricWeightLabel').textContent = `Общий объемный вес: ${totalVolWeight.toFixed(2)} кг`;
 }
 
-// Переключение полей доставки
-function toggleDeliveryFields(type) {
-    const whGroup = document.getElementById('warehouseSelectionGroup');
-    const addrGroup = document.getElementById('addressSelectionGroup');
-    if (type === 'warehouse') {
-        whGroup.style.display = 'block';
-        addrGroup.style.display = 'none';
-    } else {
-        whGroup.style.display = 'none';
-        addrGroup.style.display = 'flex';
-    }
-}
-
-// Сброс полей отделений и улиц при изменении города
-function resetWarehouseAndStreet() {
-    document.getElementById('recWarehouseInput').value = '';
-    document.getElementById('recWarehouseRef').value = '';
-    document.getElementById('recStreetInput').value = '';
-    document.getElementById('recStreetRef').value = '';
-    document.getElementById('recBuilding').value = '';
-    document.getElementById('recFlat').value = '';
-}
-
 // Открытие модального окна оформления ТТН
 async function openCreateTtnModal(orderNumber) {
     currentOrderForTtn = allOrders.find(o => o.orderNumber === orderNumber);
@@ -864,19 +842,7 @@ async function openCreateTtnModal(orderNumber) {
         return;
     }
 
-    // Сброс формы
-    document.getElementById('recLastName').value = '';
-    document.getElementById('recFirstName').value = '';
-    document.getElementById('recPhone').value = '';
-    document.getElementById('recCityInput').value = '';
-    document.getElementById('recCityRef').value = '';
-    document.getElementById('recWarehouseInput').value = '';
-    document.getElementById('recWarehouseRef').value = '';
-    document.getElementById('recStreetInput').value = '';
-    document.getElementById('recStreetRef').value = '';
-    document.getElementById('recBuilding').value = '';
-    document.getElementById('recFlat').value = '';
-
+    // Сброс формы параметров посылки
     document.getElementById('cargoTypeSelect').value = 'Parcel';
     document.getElementById('seatsAmountInput').value = 1;
     
@@ -902,113 +868,217 @@ async function openCreateTtnModal(orderNumber) {
     // Открываем модал
     document.getElementById('ttnModal').classList.add('open');
 
-    // Парсим адрес и запускаем фоновый поиск рефов Новой Почты
-    const parsed = parseAddressForTtn(currentOrderForTtn.deliveryAddressRaw);
-    document.getElementById('recLastName').value = parsed.lastName || '';
-    document.getElementById('recFirstName').value = parsed.firstName || '';
-    document.getElementById('recPhone').value = parsed.phone || '';
-    document.getElementById('recCityInput').value = parsed.city || '';
+    // Запускаем фоновое распознавание адреса
+    resolveRecipientDetails(currentOrderForTtn.deliveryAddressRaw);
+}
 
-    if (parsed.city) {
-        try {
-            const cities = await callNPApi('Address', 'getCities', { FindByString: parsed.city, Limit: 1 });
-            if (cities && cities.length > 0) {
-                const city = cities[0];
-                document.getElementById('recCityInput').value = city.Description;
-                document.getElementById('recCityRef').value = city.Ref;
+// Фоновое распознавание и разрешение адреса получателя
+async function resolveRecipientDetails(addressRaw) {
+    resolvedTtnData = {
+        isReady: false,
+        error: null,
+        firstName: '',
+        lastName: '',
+        phone: '',
+        cityRef: '',
+        cityName: '',
+        deliveryType: 'warehouse',
+        warehouseRef: '',
+        warehouseName: '',
+        streetRef: '',
+        streetName: '',
+        building: '',
+        flat: ''
+    };
 
-                if (parsed.isWarehouse && parsed.warehouse) {
-                    document.getElementById('delTypeWarehouse').checked = true;
-                    toggleDeliveryFields('warehouse');
-                    
-                    const warehouses = await callNPApi('Address', 'getWarehouses', {
-                        CityRef: city.Ref,
-                        FindByString: parsed.warehouse,
-                        Limit: 15
-                    });
-                    
-                    if (warehouses && warehouses.length > 0) {
-                        // Попробуем найти точное совпадение по номеру отделения
-                        let matchedWh = warehouses.find(w => {
-                            const whNumMatch = w.Description.match(/(?:№|отд|відд|склад|відділення)\s*(\d+)\b/i);
-                            return whNumMatch && whNumMatch[1] === parsed.warehouse;
-                        }) || warehouses[0];
+    const statusEl = document.getElementById('previewResolvingStatus');
+    const addressEl = document.getElementById('previewRecAddress');
+    const nameEl = document.getElementById('previewRecName');
+    const phoneEl = document.getElementById('previewRecPhone');
 
-                        document.getElementById('recWarehouseInput').value = matchedWh.Description;
-                        document.getElementById('recWarehouseRef').value = matchedWh.Ref;
-                    }
-                } else if (!parsed.isWarehouse) {
-                    document.getElementById('delTypeDoors').checked = true;
-                    toggleDeliveryFields('doors');
-                    
-                    // Попытка вытащить улицу
-                    const streetRegex = /(?:вул|ул|просп|проспект|бул|бульвар|пл|площадь|пров|переулок)\.?\s*([А-Яа-яЁёЇїІіЄєҐґ'\d\s-]+)/i;
-                    const streetMatch = currentOrderForTtn.deliveryAddressRaw.match(streetRegex);
-                    if (streetMatch && streetMatch[1]) {
-                        const streetName = streetMatch[1].trim().split(/,|\s{2,}/)[0];
-                        const streets = await callNPApi('Address', 'getStreet', {
-                            CityRef: city.Ref,
-                            FindByString: streetName,
-                            Limit: 5
-                        });
-                        if (streets && streets.length > 0) {
-                            const street = streets[0];
-                            document.getElementById('recStreetInput').value = `${street.StreetsType} ${street.Description}`;
-                            document.getElementById('recStreetRef').value = street.Ref;
-                        }
-                    }
+    statusEl.textContent = '🔍 Распознавание адреса...';
+    statusEl.style.color = 'var(--warning)';
+    addressEl.textContent = 'Выполняется запрос к Новой Почте...';
+    nameEl.textContent = 'Определяется...';
+    phoneEl.textContent = 'Определяется...';
 
-                    // Вытаскиваем дом и квартиру
-                    const bldgMatch = currentOrderForTtn.deliveryAddressRaw.match(/(?:буд|д|дом|№)\.?\s*(\d+[а-яёїієґ]?)\b/i) || currentOrderForTtn.deliveryAddressRaw.match(/(?:\s|^)(\d+[а-яёїієґ]?)\b/i);
-                    if (bldgMatch) {
-                        document.getElementById('recBuilding').value = bldgMatch[1];
-                    }
-                    const flatMatch = currentOrderForTtn.deliveryAddressRaw.match(/(?:кв|офис|оф|кв\.)\.?\s*(\d+)\b/i);
-                    if (flatMatch) {
-                        document.getElementById('recFlat').value = flatMatch[1];
-                    }
+    try {
+        const parsed = parseAddressForTtn(addressRaw);
+        
+        // Показываем имя и телефон получателя из таблицы сразу
+        resolvedTtnData.firstName = parsed.firstName || '';
+        resolvedTtnData.lastName = parsed.lastName || '';
+        resolvedTtnData.phone = parsed.phone || '';
+
+        nameEl.textContent = `${resolvedTtnData.lastName} ${resolvedTtnData.firstName}`.trim() || 'Не определено в таблице';
+        phoneEl.textContent = resolvedTtnData.phone || 'Не найден в таблице';
+
+        if (!resolvedTtnData.lastName || !resolvedTtnData.firstName) {
+            nameEl.textContent += ' ⚠️ (Нужна фамилия и имя)';
+        }
+        if (!resolvedTtnData.phone) {
+            phoneEl.textContent = '❌ Отсутствует телефон';
+        }
+
+        if (!parsed.city) {
+            throw new Error('Не удалось определить город в строке адреса');
+        }
+
+        // 1. Ищем город в Новой Почте
+        statusEl.textContent = `🔍 Ищем город "${parsed.city}"...`;
+        const cities = await callNPApi('Address', 'getCities', { FindByString: parsed.city, Limit: 10 });
+        if (!cities || cities.length === 0) {
+            throw new Error(`Город "${parsed.city}" не найден в базе Новой Почты`);
+        }
+        
+        // Ищем наиболее точное совпадение
+        let city = cities.find(c => c.Description.toLowerCase() === parsed.city.toLowerCase()) || cities[0];
+        resolvedTtnData.cityName = city.Description;
+        resolvedTtnData.cityRef = city.Ref;
+
+        // 2. Ищем отделение или адрес
+        if (parsed.isWarehouse && parsed.warehouse) {
+            statusEl.textContent = `🔍 Ищем отделение №${parsed.warehouse} в г. ${city.Description}...`;
+            resolvedTtnData.deliveryType = 'warehouse';
+            
+            const warehouses = await callNPApi('Address', 'getWarehouses', {
+                CityRef: city.Ref,
+                FindByString: parsed.warehouse,
+                Limit: 50
+            });
+
+            if (!warehouses || warehouses.length === 0) {
+                throw new Error(`Отделение №${parsed.warehouse} не найдено в г. ${city.Description}`);
+            }
+
+            // Ищем точное совпадение по номеру отделения
+            let matchedWh = warehouses.find(w => {
+                const whNumMatch = w.Description.match(/(?:№|отд|відд|склад|відділення)\s*(\d+)\b/i);
+                return whNumMatch && whNumMatch[1] === parsed.warehouse;
+            });
+
+            // Если точного совпадения по номеру нет, пробуем поискать по вхождению номера
+            if (!matchedWh) {
+                matchedWh = warehouses.find(w => w.Description.includes(`№${parsed.warehouse}`) || w.Description.includes(` № ${parsed.warehouse}`));
+            }
+
+            // Если все еще нет, берем первое из найденных
+            if (!matchedWh) {
+                matchedWh = warehouses[0];
+            }
+
+            resolvedTtnData.warehouseRef = matchedWh.Ref;
+            resolvedTtnData.warehouseName = matchedWh.Description;
+
+            addressEl.textContent = `${city.Description}, ${matchedWh.Description}`;
+        } else {
+            // Адресная доставка
+            resolvedTtnData.deliveryType = 'doors';
+            statusEl.textContent = `🔍 Распознаем улицу...`;
+
+            // Попытка вытащить название улицы
+            const streetRegex = /(?:вул|ул|просп|проспект|бул|бульвар|пл|площадь|пров|переулок)\.?\s*([А-Яа-яЁёЇїІіЄєҐґ'\d\s-]+)/i;
+            const streetMatch = addressRaw.match(streetRegex);
+            let streetName = '';
+            if (streetMatch && streetMatch[1]) {
+                streetName = streetMatch[1].trim().split(/,|\s{2,}/)[0];
+            } else {
+                // Если не нашли по ключевому слову, пробуем взять часть строки после города
+                const parts = addressRaw.split(',');
+                if (parts.length > 1) {
+                    streetName = parts[1].trim().replace(/\d+.*/, '').trim(); // убираем цифры и дальше
                 }
             }
-        } catch (err) {
-            console.error('Ошибка автоматического разрешения рефов Новой Почты:', err);
+
+            if (!streetName) {
+                throw new Error('Не удалось определить название улицы в строке адреса');
+            }
+
+            statusEl.textContent = `🔍 Ищем улицу "${streetName}" в г. ${city.Description}...`;
+            const streets = await callNPApi('Address', 'getStreet', {
+                CityRef: city.Ref,
+                FindByString: streetName,
+                Limit: 15
+            });
+
+            if (!streets || streets.length === 0) {
+                throw new Error(`Улица "${streetName}" не найдена в г. ${city.Description}`);
+            }
+
+            const street = streets[0]; // берем первое совпадение
+            resolvedTtnData.streetRef = street.Ref;
+            resolvedTtnData.streetName = `${street.StreetsType} ${street.Description}`;
+
+            // Вытаскиваем дом
+            const bldgMatch = addressRaw.match(/(?:буд|д|дом|№)\.?\s*(\d+[а-яёїієґ]?)\b/i) || addressRaw.match(/(?:\s|^)(\d+[а-яёїієґ]?)\b/i);
+            const building = bldgMatch ? bldgMatch[1] : '';
+            resolvedTtnData.building = building;
+
+            if (!building) {
+                throw new Error(`Не удалось определить номер дома на улице ${street.Description}`);
+            }
+
+            // Вытаскиваем квартиру
+            const flatMatch = addressRaw.match(/(?:кв|офис|оф|кв\.)\.?\s*(\d+)\b/i);
+            const flat = flatMatch ? flatMatch[1] : '';
+            resolvedTtnData.flat = flat;
+
+            addressEl.textContent = `${city.Description}, ${resolvedTtnData.streetName}, буд. ${building}${flat ? ', кв. ' + flat : ''}`;
         }
+
+        // Проверяем обязательные поля получателя для ТТН
+        if (!resolvedTtnData.lastName || !resolvedTtnData.firstName) {
+            throw new Error('В таблице не указаны имя или фамилия получателя');
+        }
+        if (!resolvedTtnData.phone) {
+            throw new Error('В таблице не указан телефон получателя');
+        }
+
+        statusEl.textContent = '✅ Готов к отправке';
+        statusEl.style.color = '#4caf50'; // Зеленый цвет успеха
+        resolvedTtnData.isReady = true;
+
+    } catch (err) {
+        console.error('Ошибка разрешения адреса:', err);
+        statusEl.textContent = '❌ Ошибка';
+        statusEl.style.color = '#f44336'; // Красный цвет ошибки
+        addressEl.innerHTML = `<span style="color: var(--warning); font-size: 0.9rem;">${err.message}</span><br><span style="color: var(--text-muted); font-size: 0.8rem;">Исходный адрес: ${addressRaw}</span>`;
+        resolvedTtnData.error = err.message;
+        resolvedTtnData.isReady = false;
     }
 }
 
 // Создание ТТН
 async function createTtn() {
+    if (!resolvedTtnData || !resolvedTtnData.isReady) {
+        const errMsg = (resolvedTtnData && resolvedTtnData.error) || 'Адрес доставки еще не распознан или содержит ошибки.';
+        alert(`Невозможно создать ТТН:\n${errMsg}`);
+        return;
+    }
+
     const btnCreate = document.getElementById('btnCreateTtn');
     const originalText = btnCreate.textContent;
     btnCreate.disabled = true;
     btnCreate.textContent = '⏳ Оформление...';
 
     try {
-        const lastName = document.getElementById('recLastName').value.trim();
-        const firstName = document.getElementById('recFirstName').value.trim();
-        const phone = document.getElementById('recPhone').value.trim();
-        const cityRef = document.getElementById('recCityRef').value;
-        const deliveryType = document.querySelector('input[name="deliveryType"]:checked').value;
-        
-        if (!lastName || !firstName || !phone || !cityRef) {
-            throw new Error('Заполните все обязательные поля получателя (Фамилия, Имя, Телефон, Город)');
-        }
+        const lastName = resolvedTtnData.lastName.trim();
+        const firstName = resolvedTtnData.firstName.trim();
+        const phone = resolvedTtnData.phone.trim();
+        const cityRef = resolvedTtnData.cityRef;
+        const deliveryType = resolvedTtnData.deliveryType;
         
         let recipientAddressRef = '';
         let serviceType = 'DoorsWarehouse'; // От адреса ("Пластова 18") до отделения
         
         if (deliveryType === 'warehouse') {
-            recipientAddressRef = document.getElementById('recWarehouseRef').value;
-            if (!recipientAddressRef) {
-                throw new Error('Выберите отделение Новой Почты из списка подсказок');
-            }
+            recipientAddressRef = resolvedTtnData.warehouseRef;
             serviceType = 'DoorsWarehouse';
         } else {
-            const streetRef = document.getElementById('recStreetRef').value;
-            const building = document.getElementById('recBuilding').value.trim();
-            const flat = document.getElementById('recFlat').value.trim();
-            if (!streetRef || !building) {
-                throw new Error('Заполните улицу и номер дома для доставки курьером');
-            }
+            const streetRef = resolvedTtnData.streetRef;
+            const building = resolvedTtnData.building.trim();
+            const flat = resolvedTtnData.flat.trim();
+            
             serviceType = 'DoorsDoors'; // От адреса до адреса
         }
 
@@ -1107,9 +1177,9 @@ async function createTtn() {
         // 3. Сохраняем адрес получателя (если доставка до дверей)
         if (deliveryType === 'doors') {
             showToast('Сохранение адреса доставки...', '🔄');
-            const streetRef = document.getElementById('recStreetRef').value;
-            const building = document.getElementById('recBuilding').value.trim();
-            const flat = document.getElementById('recFlat').value.trim();
+            const streetRef = resolvedTtnData.streetRef;
+            const building = resolvedTtnData.building.trim();
+            const flat = resolvedTtnData.flat.trim();
             
             const savedRecAddress = await callNPApi('Address', 'save', {
                 CounterpartyRef: recipientRef,
@@ -1151,10 +1221,10 @@ async function createTtn() {
             Weight: totalWeight,
             SeatsAmount: seatsAmount,
             Description: description,
-            Cost: declaredCost,
             ServiceType: serviceType,
             PaymentMethod: paymentMethod,
             PayerType: payerType,
+            Cost: declaredCost,
             OptionsSeat: optionsSeat
         };
 
@@ -1177,13 +1247,13 @@ async function createTtn() {
         document.getElementById('successTtnRef').textContent = ttnRef;
         document.getElementById('successRecipientName').textContent = `${lastName} ${firstName}`;
         
-        let destStr = document.getElementById('recCityInput').value;
+        let destStr = resolvedTtnData.cityName;
         if (deliveryType === 'warehouse') {
-            destStr += `, ${document.getElementById('recWarehouseInput').value}`;
+            destStr += `, ${resolvedTtnData.warehouseName}`;
         } else {
-            destStr += `, вул. ${document.getElementById('recStreetInput').value}, буд. ${document.getElementById('recBuilding').value}`;
-            if (document.getElementById('recFlat').value) {
-                destStr += `, кв. ${document.getElementById('recFlat').value}`;
+            destStr += `, ${resolvedTtnData.streetName}, буд. ${resolvedTtnData.building}`;
+            if (resolvedTtnData.flat) {
+                destStr += `, кв. ${resolvedTtnData.flat}`;
             }
         }
         document.getElementById('successDestination').textContent = destStr;
@@ -1343,10 +1413,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnPrintMarking100').addEventListener('click', () => printNpDocument('100x100'));
     document.getElementById('btnPrintMarking85').addEventListener('click', () => printNpDocument('85x85'));
 
-    // Радиокнопки способа доставки
-    document.getElementById('delTypeWarehouse').addEventListener('change', () => toggleDeliveryFields('warehouse'));
-    document.getElementById('delTypeDoors').addEventListener('change', () => toggleDeliveryFields('doors'));
-
     // Кнопка подтверждения создания ТТН
     document.getElementById('btnCreateTtn').addEventListener('click', createTtn);
 
@@ -1390,148 +1456,5 @@ document.addEventListener('DOMContentLoaded', () => {
     // Инициализация событий для первого ряда мест
     document.querySelectorAll('.seat-input').forEach(input => {
         input.addEventListener('input', updateVolumetricWeight);
-    });
-
-    // --- Автокомплиты Новой Почты ---
-    
-    // 1. Поиск городов
-    const recCityInput = document.getElementById('recCityInput');
-    const recCityDropdown = document.getElementById('recCityDropdown');
-    const recCityRef = document.getElementById('recCityRef');
-    
-    recCityInput.addEventListener('input', debounce(async () => {
-        const query = recCityInput.value.trim();
-        if (query.length < 2) {
-            recCityDropdown.classList.remove('active');
-            return;
-        }
-        
-        try {
-            const cities = await callNPApi('Address', 'getCities', { FindByString: query, Limit: 10 });
-            recCityDropdown.innerHTML = '';
-            if (cities && cities.length > 0) {
-                cities.forEach(city => {
-                    const item = document.createElement('div');
-                    item.className = 'autocomplete-item';
-                    const area = city.AreaDescription ? `, ${city.AreaDescription} обл.` : '';
-                    item.textContent = `${city.Description}${area}`;
-                    item.addEventListener('click', () => {
-                        recCityInput.value = city.Description;
-                        recCityRef.value = city.Ref;
-                        recCityDropdown.classList.remove('active');
-                        resetWarehouseAndStreet();
-                    });
-                    recCityDropdown.appendChild(item);
-                });
-                recCityDropdown.classList.add('active');
-            } else {
-                recCityDropdown.classList.remove('active');
-            }
-        } catch (err) {
-            console.error('Ошибка поиска городов:', err);
-        }
-    }, 300));
-
-    // 2. Поиск отделений
-    const recWarehouseInput = document.getElementById('recWarehouseInput');
-    const recWarehouseDropdown = document.getElementById('recWarehouseDropdown');
-    const recWarehouseRef = document.getElementById('recWarehouseRef');
-    
-    recWarehouseInput.addEventListener('input', debounce(async () => {
-        const cityRef = recCityRef.value;
-        if (!cityRef) {
-            showToast('Сначала выберите город!', '⚠️');
-            recWarehouseInput.value = '';
-            return;
-        }
-        const query = recWarehouseInput.value.trim();
-        
-        try {
-            const warehouses = await callNPApi('Address', 'getWarehouses', {
-                CityRef: cityRef,
-                FindByString: query,
-                Limit: 15
-            });
-            
-            recWarehouseDropdown.innerHTML = '';
-            if (warehouses && warehouses.length > 0) {
-                warehouses.forEach(wh => {
-                    const item = document.createElement('div');
-                    item.className = 'autocomplete-item';
-                    item.textContent = wh.Description;
-                    item.addEventListener('click', () => {
-                        recWarehouseInput.value = wh.Description;
-                        recWarehouseRef.value = wh.Ref;
-                        recWarehouseDropdown.classList.remove('active');
-                    });
-                    recWarehouseDropdown.appendChild(item);
-                });
-                recWarehouseDropdown.classList.add('active');
-            } else {
-                recWarehouseDropdown.classList.remove('active');
-            }
-        } catch (err) {
-            console.error('Ошибка поиска отделений:', err);
-        }
-    }, 300));
-
-    // 3. Поиск улиц
-    const recStreetInput = document.getElementById('recStreetInput');
-    const recStreetDropdown = document.getElementById('recStreetDropdown');
-    const recStreetRef = document.getElementById('recStreetRef');
-    
-    recStreetInput.addEventListener('input', debounce(async () => {
-        const cityRef = recCityRef.value;
-        if (!cityRef) {
-            showToast('Сначала выберите город!', '⚠️');
-            recStreetInput.value = '';
-            return;
-        }
-        const query = recStreetInput.value.trim();
-        if (query.length < 2) {
-            recStreetDropdown.classList.remove('active');
-            return;
-        }
-        
-        try {
-            const streets = await callNPApi('Address', 'getStreet', {
-                CityRef: cityRef,
-                FindByString: query,
-                Limit: 15
-            });
-            
-            recStreetDropdown.innerHTML = '';
-            if (streets && streets.length > 0) {
-                streets.forEach(street => {
-                    const item = document.createElement('div');
-                    item.className = 'autocomplete-item';
-                    item.textContent = `${street.StreetsType} ${street.Description}`;
-                    item.addEventListener('click', () => {
-                        recStreetInput.value = `${street.StreetsType} ${street.Description}`;
-                        recStreetRef.value = street.Ref;
-                        recStreetDropdown.classList.remove('active');
-                    });
-                    recStreetDropdown.appendChild(item);
-                });
-                recStreetDropdown.classList.add('active');
-            } else {
-                recStreetDropdown.classList.remove('active');
-            }
-        } catch (err) {
-            console.error('Ошибка поиска улиц:', err);
-        }
-    }, 300));
-
-    // Закрытие списков подсказок при клике снаружи
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('#recCityInput') && !e.target.closest('#recCityDropdown')) {
-            recCityDropdown.classList.remove('active');
-        }
-        if (!e.target.closest('#recWarehouseInput') && !e.target.closest('#recWarehouseDropdown')) {
-            recWarehouseDropdown.classList.remove('active');
-        }
-        if (!e.target.closest('#recStreetInput') && !e.target.closest('#recStreetDropdown')) {
-            recStreetDropdown.classList.remove('active');
-        }
     });
 });
