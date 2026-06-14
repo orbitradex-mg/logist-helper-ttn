@@ -87,6 +87,16 @@ function normalizeRow(row) {
         orderDescription: row['Описание заказа'] || '',
         quantity: row['Тираж'] || '0',
         deliveryAddressRaw: (row['Куда доставить. Город, Телефон, ФИО Получателя, № склада, Адресс'] || '').trim(),
+        // Новые структурированные поля для получателя
+        recLastName: (row['Получатель - Фамилия'] || '').trim(),
+        recFirstName: (row['Получатель - Имя'] || '').trim(),
+        recPhone: (row['Получатель - Телефон'] || '').trim(),
+        recCity: (row['Получатель - Город'] || '').trim(),
+        recDeliveryType: (row['Получатель - Способ доставки'] || '').trim(),
+        recWarehouse: (row['Получатель - Номер отделения'] || '').trim(),
+        recStreet: (row['Получатель - Улица'] || '').trim(),
+        recBuilding: (row['Получатель - Дом'] || '').trim(),
+        recFlat: (row['Получатель - Кв / Офис'] || '').trim(),
         paidBy: (row['За чей счет?'] || '').trim(),
         sendWithGoods: row['С товаром отправить'] || '',
         purchaseTask: row['Задание Закупить'] || ''
@@ -717,9 +727,9 @@ async function callNPApi(modelName, calledMethod, methodProperties = {}) {
     return data.data;
 }
 
-// Парсер адресов из Google Таблицы
-function parseAddressForTtn(addressRaw) {
-    if (!addressRaw) return { lastName: '', firstName: '', phone: '', city: '', warehouse: '', isWarehouse: true };
+// Старый текстовый парсер адреса (обратная совместимость)
+function parseAddressForTtnLegacy(addressRaw) {
+    if (!addressRaw) return { lastName: '', firstName: '', phone: '', city: '', warehouse: '', isWarehouse: true, isStructured: false };
 
     const clean = addressRaw.replace(/""/g, '"').trim();
     
@@ -800,8 +810,65 @@ function parseAddressForTtn(addressRaw) {
         phone: normalizedPhone,
         city: city || 'Київ',
         warehouse: warehouse,
-        isWarehouse: isWarehouse
+        isWarehouse: isWarehouse,
+        isStructured: false
     };
+}
+
+// Главный парсер/структуризатор адресов получателя
+function parseAddressForTtn(order) {
+    if (!order) return { lastName: '', firstName: '', phone: '', city: '', warehouse: '', isWarehouse: true, isStructured: false };
+
+    // Проверяем, заполнены ли новые структурированные колонки
+    if (order.recLastName || order.recFirstName || order.recPhone || order.recCity) {
+        let isWarehouse = true;
+        const delType = (order.recDeliveryType || '').toLowerCase();
+        
+        if (delType.includes('адрес') || delType.includes('двер') || delType.includes('курьер') || order.recStreet) {
+            isWarehouse = false;
+        }
+
+        // Нормализация телефона
+        let normalizedPhone = '';
+        if (order.recPhone) {
+            const digits = order.recPhone.replace(/\D/g, '');
+            if (digits.length === 9) {
+                normalizedPhone = '380' + digits;
+            } else if (digits.length === 10 && digits.startsWith('0')) {
+                normalizedPhone = '38' + digits;
+            } else if (digits.length === 12 && digits.startsWith('380')) {
+                normalizedPhone = digits;
+            } else {
+                normalizedPhone = digits;
+            }
+        }
+
+        // Нормализация названия города
+        let city = (order.recCity || '').trim();
+        if (city) {
+            city = city.replace(/^(киев|київ)$/i, 'Київ')
+                       .replace(/^(одесса|одеса)$/i, 'Одеса')
+                       .replace(/^(харьков|харків)$/i, 'Харків')
+                       .replace(/^(днепр|дніпро|днепропетровск)$/i, 'Дніпро')
+                       .replace(/^(львов|львів)$/i, 'Львів');
+        }
+
+        return {
+            lastName: (order.recLastName || '').trim(),
+            firstName: (order.recFirstName || '').trim(),
+            phone: normalizedPhone,
+            city: city || 'Київ',
+            warehouse: (order.recWarehouse || '').trim(),
+            street: (order.recStreet || '').trim(),
+            building: (order.recBuilding || '').trim(),
+            flat: (order.recFlat || '').trim(),
+            isWarehouse: isWarehouse,
+            isStructured: true
+        };
+    }
+
+    // Иначе откатываемся к старому парсингу строки адреса
+    return parseAddressForTtnLegacy(order.deliveryAddressRaw);
 }
 
 // Сброс и инициализация таблицы мест
@@ -869,11 +936,11 @@ async function openCreateTtnModal(orderNumber) {
     document.getElementById('ttnModal').classList.add('open');
 
     // Запускаем фоновое распознавание адреса
-    resolveRecipientDetails(currentOrderForTtn.deliveryAddressRaw);
+    resolveRecipientDetails(currentOrderForTtn);
 }
 
 // Фоновое распознавание и разрешение адреса получателя
-async function resolveRecipientDetails(addressRaw) {
+async function resolveRecipientDetails(order) {
     resolvedTtnData = {
         isReady: false,
         error: null,
@@ -902,8 +969,10 @@ async function resolveRecipientDetails(addressRaw) {
     nameEl.textContent = 'Определяется...';
     phoneEl.textContent = 'Определяется...';
 
+    const addressRaw = order.deliveryAddressRaw || '';
+
     try {
-        const parsed = parseAddressForTtn(addressRaw);
+        const parsed = parseAddressForTtn(order);
         
         // Показываем имя и телефон получателя из таблицы сразу
         resolvedTtnData.firstName = parsed.firstName || '';
@@ -976,17 +1045,20 @@ async function resolveRecipientDetails(addressRaw) {
             resolvedTtnData.deliveryType = 'doors';
             statusEl.textContent = `🔍 Распознаем улицу...`;
 
-            // Попытка вытащить название улицы
-            const streetRegex = /(?:вул|ул|просп|проспект|бул|бульвар|пл|площадь|пров|переулок)\.?\s*([А-Яа-яЁёЇїІіЄєҐґ'\d\s-]+)/i;
-            const streetMatch = addressRaw.match(streetRegex);
             let streetName = '';
-            if (streetMatch && streetMatch[1]) {
-                streetName = streetMatch[1].trim().split(/,|\s{2,}/)[0];
+            if (parsed.isStructured) {
+                streetName = parsed.street;
             } else {
-                // Если не нашли по ключевому слову, пробуем взять часть строки после города
-                const parts = addressRaw.split(',');
-                if (parts.length > 1) {
-                    streetName = parts[1].trim().replace(/\d+.*/, '').trim(); // убираем цифры и дальше
+                // Попытка вытащить название улицы из сырой строки
+                const streetRegex = /(?:вул|ул|просп|проспект|бул|бульвар|пл|площадь|пров|переулок)\.?\s*([А-Яа-яЁёЇїІіЄєҐґ'\d\s-]+)/i;
+                const streetMatch = addressRaw.match(streetRegex);
+                if (streetMatch && streetMatch[1]) {
+                    streetName = streetMatch[1].trim().split(/,|\s{2,}/)[0];
+                } else {
+                    const parts = addressRaw.split(',');
+                    if (parts.length > 1) {
+                        streetName = parts[1].trim().replace(/\d+.*/, '').trim();
+                    }
                 }
             }
 
@@ -1009,19 +1081,25 @@ async function resolveRecipientDetails(addressRaw) {
             resolvedTtnData.streetRef = street.Ref;
             resolvedTtnData.streetName = `${street.StreetsType} ${street.Description}`;
 
-            // Вытаскиваем дом
-            const bldgMatch = addressRaw.match(/(?:буд|д|дом|№)\.?\s*(\d+[а-яёїієґ]?)\b/i) || addressRaw.match(/(?:\s|^)(\d+[а-яёїієґ]?)\b/i);
-            const building = bldgMatch ? bldgMatch[1] : '';
+            // Вытаскиваем дом и квартиру
+            let building = '';
+            let flat = '';
+            if (parsed.isStructured) {
+                building = parsed.building;
+                flat = parsed.flat;
+            } else {
+                const bldgMatch = addressRaw.match(/(?:буд|д|дом|№)\.?\s*(\d+[а-яёїієґ]?)\b/i) || addressRaw.match(/(?:\s|^)(\d+[а-яёїієґ]?)\b/i);
+                building = bldgMatch ? bldgMatch[1] : '';
+                
+                const flatMatch = addressRaw.match(/(?:кв|офис|оф|кв\.)\.?\s*(\d+)\b/i);
+                flat = flatMatch ? flatMatch[1] : '';
+            }
             resolvedTtnData.building = building;
+            resolvedTtnData.flat = flat;
 
             if (!building) {
                 throw new Error(`Не удалось определить номер дома на улице ${street.Description}`);
             }
-
-            // Вытаскиваем квартиру
-            const flatMatch = addressRaw.match(/(?:кв|офис|оф|кв\.)\.?\s*(\d+)\b/i);
-            const flat = flatMatch ? flatMatch[1] : '';
-            resolvedTtnData.flat = flat;
 
             addressEl.textContent = `${city.Description}, ${resolvedTtnData.streetName}, буд. ${building}${flat ? ', кв. ' + flat : ''}`;
         }
